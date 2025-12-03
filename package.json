@@ -1,0 +1,35 @@
+{
+  "name": "nanomotion",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build --turbopack",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@google/genai": "^1.17.0",
+    "@vercel/blob": "^1.1.1",
+    "gif.js": "^0.2.0",
+    "lucide-react": "^0.263.1",
+    "mime": "^4.0.7",
+    "motion": "^12.23.12",
+    "nanoid": "^5.1.5",
+    "next": "15.5.2",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/gif.js": "^0.2.5",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.2",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
