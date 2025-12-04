@@ -10,3 +10,9 @@ A stunning stop-motion animation generator using single image
 ## 效果图
 
 ![NanoMotion App Screenshot](./ScreenShot_2025-12-03_162958_679.png)
+
+### 生成gif
+
+![NanoMotion App Screenshot](./nanomotion-animation-1764830380765.gif)
+
+![NanoMotion App Screenshot](./nanomotion-animation-1764830817471.gif)

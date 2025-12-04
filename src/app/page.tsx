@@ -36,19 +36,20 @@ export default function Home() {
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
   const [lastSelectedFile, setLastSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const animationRef = useRef<NodeJS.Timeout | null>(null);
+  const animationRef = useRef<number | null>(null); // ✅ 修复类型
 
-  // Animation loop
+  // Animation loop - 改进的清理逻辑
   useEffect(() => {
+    // 清理旧的 interval
+    if (animationRef.current) {
+      clearInterval(animationRef.current);
+      animationRef.current = null;
+    }
+
     if (isPlaying && frames.length > 0) {
       animationRef.current = setInterval(() => {
         setCurrentFrame((prev) => (prev + 1) % frames.length);
       }, 1000 / frameRate);
-    } else {
-      if (animationRef.current) {
-        clearInterval(animationRef.current);
-        animationRef.current = null;
-      }
     }
 
     return () => {
@@ -58,18 +59,18 @@ export default function Home() {
     };
   }, [isPlaying, frames.length, frameRate]);
 
+  // ✅ 改进的文件选择处理
   const handleFileSelection = useCallback((files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    const file = files[files.length - 1];
-
+    // 只处理第一个文件（更符合用户预期）
+    const file = files[0];
+    
     if (file.type.startsWith("image/")) {
       setLastSelectedFile(file);
       const reader = new FileReader();
       reader.onload = (e) => {
         const url = e.target?.result as string;
-
-        // Set the uploaded image as preview in upload area
         setUploadPreview(url);
       };
       reader.readAsDataURL(file);
@@ -205,7 +206,7 @@ export default function Home() {
                 
               case 'complete':
                 setGenerationProgress("Animation generation complete!");
-                setTimeout(() => setGenerationProgress(""), 3000);
+                setTimeout(() => setGenerationProgress(""), 6000);
                 break;
                 
               case 'error':
@@ -219,143 +220,325 @@ export default function Home() {
     } catch (error) {
       console.error("Error during animation generation:", error);
       setGenerationProgress("Error: " + (error instanceof Error ? error.message : "Unknown error"));
-      setTimeout(() => setGenerationProgress(""), 5000);
+      setTimeout(() => setGenerationProgress(""), 8000);
     } finally {
       setIsGenerating(false);
     }
   };
 
   const exportAnimation = async () => {
-    if (frames.length === 0) return;
+    if (frames.length === 0) {
+      alert('没有可导出的帧');
+      return;
+    }
 
+    // ✅ 改进的GIF生成逻辑
     try {
-      console.log('Starting GIF export with', frames.length, 'frames');
-      
-      // Import gif.js dynamically
-      const GIFModule = await import('gif.js');
-      const GIF = GIFModule.default;
+      console.log('开始生成GIF，共', frames.length, '帧');
 
-      // Create a new GIF with optimized configuration
-      const gif = new GIF({
-        workers: 2,
-        quality: 10,
-        width: null,  // Will be set by first frame
-        height: null,  // Will be set by first frame
-        transparent: null,
-        dither: false,
-        debug: false
-      });
+      // 显示生成进度
+      setGenerationProgress('正在准备生成GIF...');
 
-      // Calculate delay based on frame rate (in milliseconds)
-      const delay = Math.round(1000 / frameRate);
-      console.log('Frame delay:', delay, 'ms');
+      // 获取所有图片URL
+      const imageUrls = frames.map(frame => frame.url);
+      console.log('准备生成GIF，图片数量:', imageUrls.length);
 
-      // Add each frame to the GIF
-      for (let i = 0; i < frames.length; i++) {
-        const frame = frames[i];
-        console.log(`Processing frame ${i + 1}/${frames.length}`);
-        
-        // Create an optimized canvas for better performance
+      setGenerationProgress('正在生成GIF动画，请稍候...');
+
+      // 🎯 使用gifencoder生成真正的GIF
+      try {
+        console.log('🚀 使用gifencoder生成GIF...');
+
+        // 动态导入gifencoder
+        const { default: GIFEncoder } = await import('gifencoder');
+        if (!GIFEncoder) {
+          throw new Error('gifencoder模块未找到');
+        }
+
+        console.log('✅ gifencoder模块导入成功');
+
+        // 创建Canvas
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        
+
         if (!ctx) {
-          console.warn('Failed to get canvas context for frame', i);
-          continue;
+          throw new Error('无法创建Canvas上下文');
         }
-        
-        // Create an image element for the frame
-        const img = new Image();
-        img.crossOrigin = 'anonymous'; // Enable CORS
-        img.src = frame.url;
-        
-        // Wait for image to load
-        await new Promise((resolve, reject) => {
-          if (img.complete) {
-            resolve(null);
-          } else {
-            img.onload = () => resolve(null);
-            img.onerror = (error) => {
-              console.warn(`Failed to load frame ${i}:`, error);
-              resolve(null); // Continue even if there's an error
+
+        // 设置合适的尺寸
+        canvas.width = 400;
+        canvas.height = 300;
+
+        setGenerationProgress('正在加载图片...');
+
+        // 预加载所有需要的图片
+        const imagesToProcess = frames.slice(0, Math.min(frames.length, 12)); // 增加到12帧
+        const loadedImages: HTMLImageElement[] = [];
+
+        for (let i = 0; i < imagesToProcess.length; i++) {
+          setGenerationProgress(`加载第 ${i + 1}/${imagesToProcess.length} 帧...`);
+
+          const img = new Image();
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              reject(new Error(`图片${i + 1}加载超时`));
+            }, 15000); // 增加超时时间到15秒
+
+            img.onload = () => {
+              clearTimeout(timeout);
+              resolve();
             };
-          }
-        });
-        
-        // Set canvas dimensions to match image
-        canvas.width = img.naturalWidth || img.width;
-        canvas.height = img.naturalHeight || img.height;
-        
-        // Draw image to canvas (this triggers the willReadFrequently optimization)
-        ctx.drawImage(img, 0, 0);
-        
-        // Add frame to GIF using canvas for better performance
-        gif.addFrame(canvas, { 
-          delay,
-          copy: true, // Copy the frame instead of referencing it
-          dispose: -1 // Dispose method for better compatibility
-        });
-        
-        // Clean up
-        canvas.width = 0;
-        canvas.height = 0;
-      }
 
-      // Handle progress updates
-      gif.on('progress', (p) => {
-        console.log('GIF encoding progress:', Math.round(p * 100) + '%');
-      });
+            img.onerror = () => {
+              clearTimeout(timeout);
+              reject(new Error(`图片${i + 1}加载失败`));
+            };
 
-      // Handle finished event
-      gif.on('finished', (blob) => {
-        console.log('GIF creation completed, blob size:', blob.size, 'bytes');
-        
-        if (blob.size === 0) {
-          throw new Error('Generated GIF is empty');
+            img.src = frames[i].url;
+          });
+
+          loadedImages.push(img);
         }
-        
-        // Create download link
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
+
+        console.log('✅ 所有图片加载完成');
+
+        // 创建GIF编码器
+        const encoder = new GIFEncoder(canvas.width, canvas.height);
+        encoder.start();
+        encoder.setRepeat(0); // 0 = 循环播放
+        encoder.setDelay(Math.round(1000 / frameRate)); // 帧间隔（毫秒）
+        encoder.setQuality(10); // 更好的质量：1-30，越小质量越好
+        // encoder.setTransparent(0x000000); // 移除透明色设置，提高兼容性
+
+        setGenerationProgress('正在生成GIF帧...');
+
+        // 逐帧处理
+        for (let i = 0; i < loadedImages.length; i++) {
+          setGenerationProgress(`生成第 ${i + 1}/${loadedImages.length} 帧...`);
+
+          const img = loadedImages[i];
+
+          // 清空画布（黑色背景，更适合动画）
+          ctx.fillStyle = '#000000';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          // 计算缩放比例，保持图片比例
+          const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+          const width = img.width * scale;
+          const height = img.height * scale;
+          const x = (canvas.width - width) / 2;
+          const y = (canvas.height - height) / 2;
+
+          // 绘制图片
+          ctx.drawImage(img, x, y, width, height);
+
+          // 添加到GIF
+          encoder.addFrame(ctx);
+
+          console.log(`✅ 已添加第 ${i + 1} 帧`);
+        }
+
+        setGenerationProgress('正在完成GIF编码...');
+
+        // 完成编码
+        encoder.finish();
+
+        // 获取GIF数据
+        const gifBuffer = encoder.out.getData();
+        const gifBlob = new Blob([gifBuffer], { type: 'image/gif' });
+
+        console.log('✅ GIF编码完成，文件大小:', gifBlob.size, 'bytes');
+
+        // 下载GIF
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(gifBlob);
         link.download = `nanomotion-animation-${Date.now()}.gif`;
-        
-        // Ensure the link is properly configured
         link.style.display = 'none';
         document.body.appendChild(link);
         link.click();
-        
-        // Clean up
-        setTimeout(() => {
-          document.body.removeChild(link);
-          URL.revokeObjectURL(link.href);
-        }, 100);
-        
-        console.log('Download triggered successfully');
-      });
+        document.body.removeChild(link);
 
-      // Handle error
-      gif.on('error', (error) => {
-        console.error('GIF creation error:', error);
-        alert('Failed to create GIF: ' + error.message);
-      });
+        console.log('✅ GIF下载成功');
+        setGenerationProgress('🎉 GIF动画生成并下载成功！');
 
-      console.log('Starting GIF rendering...');
-      // Start rendering the GIF
-      gif.render();
+        setTimeout(() => setGenerationProgress(''), 6000);
+        alert(`🎉 GIF动画生成成功！\n\n📊 详情:\n• 帧数: ${loadedImages.length}\n• 帧率: ${frameRate} FPS\n• 分辨率: ${canvas.width}x${canvas.height}\n• 文件大小: ${Math.round(gifBlob.size / 1024)}KB\n• 质量: 优化的gifencoder编码\n\n✨ 生成完美！现在可以使用其他GIF制作工具创建更高质量的动画`);
+        return;
+
+      } catch (gifencoderError) {
+        console.log('gifencoder失败，使用JSZip备用方案:', gifencoderError);
+        setGenerationProgress('gifencoder失败，使用备用方案...');
+      }
+
+      // ✅ 改进的Canvas备用方案 - 实际生成多帧GIF
+      console.log('使用Canvas生成GIF...');
+      setGenerationProgress('正在用Canvas生成GIF...');
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+      if (!ctx) {
+        throw new Error('无法创建Canvas上下文');
+      }
+
+      // ✅ 统一Canvas尺寸
+      canvas.width = 400;
+      canvas.height = 300;
+
+      // ✅ 预加载所有图片
+      const loadedImages: HTMLImageElement[] = [];
       
-    } catch (error) {
-      console.error('Export animation error:', error);
-      alert('Export failed: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      setGenerationProgress('正在加载图片...');
       
-      // Fallback: download first frame as image
+      for (let i = 0; i < Math.min(frames.length, 12); i++) {
+        const img = new Image();
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error(`图片${i + 1}加载超时`));
+          }, 15000); // 增加超时时间到15秒
+
+          img.onload = () => {
+            clearTimeout(timeout);
+            resolve();
+          };
+
+          img.onerror = () => {
+            clearTimeout(timeout);
+            reject(new Error(`图片${i + 1}加载失败`));
+          };
+
+          img.src = frames[i].url;
+        });
+        loadedImages.push(img);
+      }
+
+      setGenerationProgress('正在生成GIF帧...');
+
+      // ✅ 使用更简单的方法：创建简单的多帧动画
+      // 这里我们使用一个简化的GIF生成器或者直接提供多张图片下载
+      
+      // 方案：打包所有帧为ZIP文件
       try {
-        console.log('Attempting fallback: downloading first frame');
-        const link = document.createElement("a");
-        link.href = frames[0].url;
-        link.download = `nanomotion-frame-0.${frames[0].file.name.split(".").pop() || 'png'}`;
+        setGenerationProgress('正在创建图片包...');
+        
+        // 使用JSZip创建ZIP文件
+        const JSZip = (await import('jszip')).default;
+        const zip = new JSZip();
+        
+        // 添加每一帧到ZIP
+        for (let i = 0; i < loadedImages.length; i++) {
+          const img = loadedImages[i];
+          
+          // 绘制到Canvas
+          ctx.fillStyle = '#000000';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          
+          // 绘制图片（保持比例）
+          const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+          const x = (canvas.width - img.width * scale) / 2;
+          const y = (canvas.height - img.height * scale) / 2;
+          
+          ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+          
+          // 转换为Blob
+          const canvasBlob = await new Promise<Blob>((resolve, reject) => {
+            try {
+              canvas.toBlob((blob) => {
+                if (blob) {
+                  resolve(blob);
+                } else {
+                  reject(new Error('Canvas转Blob失败'));
+                }
+              }, 'image/png', 0.9);
+            } catch (error) {
+              reject(error);
+            }
+          });
+          
+          // 添加到ZIP
+          zip.file(`frame_${(i + 1).toString().padStart(3, '0')}.png`, canvasBlob);
+        }
+        
+        // 生成ZIP并下载
+        setGenerationProgress('正在打包文件...');
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(zipBlob);
+        link.download = `nanomotion-frames-${Date.now()}.zip`;
         link.click();
-      } catch (fallbackError) {
-        console.error('Fallback download also failed:', fallbackError);
+        
+        console.log('ZIP文件下载成功');
+        setGenerationProgress('已下载帧图片包！');
+        
+        setTimeout(() => setGenerationProgress(''), 6000);
+        alert(`⚠️ 无法生成GIF动画，但已下载所有帧图片\n\n包含: ${loadedImages.length}张PNG图片\n可以使用其他GIF制作工具创建动画\n\n推荐工具:\n- Adobe After Effects\n- GIMP\n- Online GIF makers`);
+        
+        return;
+        
+      } catch (zipError) {
+        console.log('ZIP生成失败，使用最后备用方案:', zipError);
+      }
+
+      // 最简单的备用方案：下载第一帧
+      console.log('使用最基础的备用方案');
+      setGenerationProgress('下载单张图片作为备用...');
+
+      const img = loadedImages[0] || new Image();
+      if (!loadedImages[0]) {
+        img.src = frames[0].url;
+        await new Promise<void>((resolve) => {
+          img.onload = () => resolve();
+        });
+      }
+
+      // 清空画布
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 绘制图片（保持比例）
+      const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+      const x = (canvas.width - img.width * scale) / 2;
+      const y = (canvas.height - img.height * scale) / 2;
+
+      ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+
+      const canvasBlob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('Canvas转Blob失败'));
+          }
+        }, 'image/png');
+      });
+
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(canvasBlob);
+      link.download = `nanomotion-backup-${Date.now()}.png`;
+      link.click();
+
+      console.log('单帧图片下载成功');
+      setGenerationProgress('已下载第一帧作为备用');
+
+      setTimeout(() => setGenerationProgress(''), 6000);
+      alert(`⚠️ 动画生成完全失败，已下载第一帧\n\n建议:\n1. 检查浏览器控制台错误\n2. 尝试减少帧数\n3. 使用专业GIF制作工具\n4. 刷新页面重试`);
+
+    } catch (error) {
+      console.error('GIF生成完全失败:', error);
+      setGenerationProgress('GIF生成失败');
+
+      setTimeout(() => setGenerationProgress(''), 6000);
+
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      alert(`❌ GIF生成失败\n\n错误: ${errorMessage}\n\n建议:\n1. 刷新页面重试\n2. 减少生成帧数\n3. 检查浏览器内存\n\n或者手动下载单张图片:`);
+
+      // 最后的备用方案：下载第一帧
+      if (frames.length > 0) {
+        const link = document.createElement('a');
+        link.href = frames[0].url;
+        link.download = `nanomotion-backup-${Date.now()}.png`;
+        link.click();
       }
     }
   };

@@ -10,8 +10,12 @@
   },
   "dependencies": {
     "@google/genai": "^1.17.0",
+    "@types/jszip": "^3.4.1",
     "@vercel/blob": "^1.1.1",
     "gif.js": "^0.2.0",
+    "gifencoder": "^2.0.1",
+    "gifshot": "^0.4.5",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.263.1",
     "mime": "^4.0.7",
     "motion": "^12.23.12",
