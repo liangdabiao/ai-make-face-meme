@@ -35,8 +35,11 @@ export default function Home() {
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
   const [uploadPreview, setUploadPreview] = useState<string | null>(null);
   const [lastSelectedFile, setLastSelectedFile] = useState<File | null>(null);
+  // 拖拽排序相关状态
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const animationRef = useRef<number | null>(null); // ✅ 修复类型
+  const animationRef = useRef<NodeJS.Timeout | null>(null); // ✅ 修复类型
 
   // Animation loop - 改进的清理逻辑
   useEffect(() => {
@@ -59,21 +62,31 @@ export default function Home() {
     };
   }, [isPlaying, frames.length, frameRate]);
 
-  // ✅ 改进的文件选择处理
+  // ✅ 改进的文件选择处理 - 支持多文件上传
   const handleFileSelection = useCallback((files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    // 只处理第一个文件（更符合用户预期）
-    const file = files[0];
-    
-    if (file.type.startsWith("image/")) {
-      setLastSelectedFile(file);
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const url = e.target?.result as string;
-        setUploadPreview(url);
-      };
-      reader.readAsDataURL(file);
+    // 处理所有选中的图片文件
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      
+      if (file.type.startsWith("image/")) {
+        // 创建帧数据
+        const frame: Frame = {
+          id: `frame-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 9)}`,
+          url: URL.createObjectURL(file),
+          file: file
+        };
+        
+        // 更新帧列表
+        setFrames(prev => [...prev, frame]);
+        
+        // 如果是第一个文件，更新预览
+        if (i === 0) {
+          setLastSelectedFile(file);
+          setUploadPreview(frame.url);
+        }
+      }
     }
   }, []);
 
@@ -98,6 +111,12 @@ export default function Home() {
 
   const removeFrame = (id: string) => {
     setFrames((prev) => {
+      // 找到要删除的帧并释放其URL
+      const frameToRemove = prev.find((frame) => frame.id === id);
+      if (frameToRemove) {
+        URL.revokeObjectURL(frameToRemove.url);
+      }
+      
       const newFrames = prev.filter((frame) => frame.id !== id);
       if (currentFrame >= newFrames.length && newFrames.length > 0) {
         setCurrentFrame(newFrames.length - 1);
@@ -106,14 +125,26 @@ export default function Home() {
     });
   };
 
-  const moveFrame = (fromIndex: number, toIndex: number) => {
+  // ✅ 改进的移动帧处理，确保帧索引正确性
+  const moveFrame = (dragIndex: number, hoverIndex: number) => {
     setFrames((prev) => {
       const newFrames = [...prev];
-      const [movedFrame] = newFrames.splice(fromIndex, 1);
-      newFrames.splice(toIndex, 0, movedFrame);
+      const [draggedFrame] = newFrames.splice(dragIndex, 1);
+      newFrames.splice(hoverIndex, 0, draggedFrame);
       return newFrames;
     });
+    
+    // 更新当前帧索引，确保它指向原来的帧
+    if (dragIndex === currentFrame) {
+      setCurrentFrame(hoverIndex);
+    } else if (dragIndex < currentFrame && hoverIndex >= currentFrame) {
+      setCurrentFrame(currentFrame - 1);
+    } else if (dragIndex > currentFrame && hoverIndex <= currentFrame) {
+      setCurrentFrame(currentFrame + 1);
+    }
   };
+
+
 
   const generateAnimation = async () => {
     if (!lastSelectedFile) {
@@ -294,7 +325,7 @@ export default function Home() {
               reject(new Error(`图片${i + 1}加载失败`));
             };
 
-            img.src = frames[i].url;
+            img.src = imagesToProcess[i].url;
           });
 
           loadedImages.push(img);
@@ -361,8 +392,11 @@ export default function Home() {
         console.log('✅ GIF下载成功');
         setGenerationProgress('🎉 GIF动画生成并下载成功！');
 
+        // 清理临时创建的canvas
+        canvas.remove();
+
         setTimeout(() => setGenerationProgress(''), 6000);
-        alert(`🎉 GIF动画生成成功！\n\n📊 详情:\n• 帧数: ${loadedImages.length}\n• 帧率: ${frameRate} FPS\n• 分辨率: ${canvas.width}x${canvas.height}\n• 文件大小: ${Math.round(gifBlob.size / 1024)}KB\n• 质量: 优化的gifencoder编码\n\n✨ 生成完美！现在可以使用其他GIF制作工具创建更高质量的动画`);
+        // 使用toast或其他非阻塞方式通知用户，避免使用alert
         return;
 
       } catch (gifencoderError) {
@@ -471,9 +505,11 @@ export default function Home() {
         console.log('ZIP文件下载成功');
         setGenerationProgress('已下载帧图片包！');
         
-        setTimeout(() => setGenerationProgress(''), 6000);
-        alert(`⚠️ 无法生成GIF动画，但已下载所有帧图片\n\n包含: ${loadedImages.length}张PNG图片\n可以使用其他GIF制作工具创建动画\n\n推荐工具:\n- Adobe After Effects\n- GIMP\n- Online GIF makers`);
+        // 清理临时创建的canvas
+        canvas.remove();
         
+        setTimeout(() => setGenerationProgress(''), 6000);
+        // 使用toast或其他非阻塞方式通知用户，避免使用alert
         return;
         
       } catch (zipError) {
@@ -517,6 +553,9 @@ export default function Home() {
       link.href = URL.createObjectURL(canvasBlob);
       link.download = `nanomotion-backup-${Date.now()}.png`;
       link.click();
+      
+      // 清理临时创建的canvas
+      canvas.remove();
 
       console.log('单帧图片下载成功');
       setGenerationProgress('已下载第一帧作为备用');
@@ -561,6 +600,49 @@ export default function Home() {
   const prevFrame = () => {
     if (frames.length === 0) return;
     setCurrentFrame((prev) => (prev - 1 + frames.length) % frames.length);
+  };
+
+  // ✅ 拖拽排序功能的事件处理
+  const handleFrameDragStart = (index: number) => (e: any) => {
+    const dragEvent = e as React.DragEvent;
+    setDraggedIndex(index);
+    dragEvent.dataTransfer.effectAllowed = 'move';
+    // 设置拖拽数据，确保在所有浏览器中都能工作
+    dragEvent.dataTransfer.setData('text/html', '');
+  };
+
+  const handleFrameDragOver = (index: number) => (e: any) => {
+    const dragEvent = e as React.DragEvent;
+    dragEvent.preventDefault();
+    dragEvent.dataTransfer.dropEffect = 'move';
+    setDragOverIndex(index);
+  };
+
+  const handleFrameDragLeave = () => {
+    setDragOverIndex(null);
+  };
+
+  const handleFrameDrop = (targetIndex: number) => (e: any) => {
+    const dragEvent = e as React.DragEvent;
+    dragEvent.preventDefault();
+    
+    if (draggedIndex === null || draggedIndex === targetIndex) {
+      setDraggedIndex(null);
+      setDragOverIndex(null);
+      return;
+    }
+
+    // 使用moveFrame函数进行帧移动
+    moveFrame(draggedIndex, targetIndex);
+
+    // 清理拖拽状态
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+    setDragOverIndex(null);
   };
 
   return (
@@ -792,39 +874,90 @@ export default function Home() {
               {/* Frame Timeline */}
               {frames.length > 0 && (
                 <div className="border-t pt-4">
-                  <h3 className="text-sm font-medium mb-3">Timeline</h3>
+                  <h3 className="text-sm font-medium mb-3">Timeline (拖拽排序)</h3>
                   <div className="flex gap-2 overflow-x-auto pb-2">
-                    {frames.map((frame, index) => (
-                      <motion.div
-                        key={frame.id}
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className={`relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${
-                          index === currentFrame
-                            ? "border-purple-500 ring-2 ring-purple-200"
-                            : "border-gray-300 hover:border-purple-300"
-                        }`}
-                        onClick={() => setCurrentFrame(index)}
-                      >
-                        <img
-                          src={frame.url}
-                          alt={`Frame ${index + 1}`}
-                          className="w-full h-full object-cover"
-                        />
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeFrame(frame.id);
+                    {frames.map((frame, index) => {
+                      const isDragged = draggedIndex === index;
+                      const isDragOver = dragOverIndex === index;
+                      
+                      return (
+                        <motion.div
+                          key={frame.id}
+                          initial={{ opacity: 0, scale: 0.8 }}
+                          animate={{ 
+                            opacity: 1, 
+                            scale: isDragged ? 0.8 : isDragOver ? 1.1 : 1,
+                            rotate: isDragged ? 5 : 0,
                           }}
-                          className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center text-xs transition-colors"
+                          draggable
+                          onDragStart={handleFrameDragStart(index)}
+                          onDragOver={handleFrameDragOver(index)}
+                          onDragEnd={handleDragEnd}
+                          onDrop={handleFrameDrop(index)}
+                          className={`relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden cursor-move border-2 transition-all select-none ${
+                            index === currentFrame
+                              ? "border-purple-500 ring-2 ring-purple-200"
+                              : "border-gray-300 hover:border-purple-300"
+                          } ${
+                            isDragged 
+                              ? "opacity-50 border-blue-400 bg-blue-50" 
+                              : isDragOver 
+                                ? "border-blue-500 bg-blue-100 ring-2 ring-blue-300 scale-110" 
+                                : ""
+                          }`}
+                          onClick={() => !isDragged && setCurrentFrame(index)}
+                          style={{
+                            zIndex: isDragged || isDragOver ? 1000 : 1,
+                          }}
                         >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                        <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs text-center py-1">
-                          {index + 1}
-                        </div>
-                      </motion.div>
-                    ))}
+                          <img
+                            src={frame.url}
+                            alt={`Frame ${index + 1}`}
+                            className="w-full h-full object-cover pointer-events-none"
+                          />
+                          
+                          {/* 删除按钮 - 在拖拽时隐藏 */}
+                          {!isDragged && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeFrame(frame.id);
+                              }}
+                              className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center text-xs transition-colors z-10"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                          
+                          {/* 帧编号 */}
+                          <div className={`absolute bottom-0 left-0 right-0 text-white text-xs text-center py-1 ${
+                            isDragged || isDragOver ? "bg-blue-600" : "bg-black bg-opacity-50"
+                          }`}>
+                            {index + 1}
+                          </div>
+                          
+                          {/* 拖拽指示器 */}
+                          {isDragged && (
+                            <div className="absolute inset-0 bg-blue-500 bg-opacity-20 border-2 border-dashed border-blue-500 rounded-lg flex items-center justify-center">
+                              <div className="w-4 h-4 bg-blue-500 rounded-full"></div>
+                            </div>
+                          )}
+                          
+                          {/* 拖拽放置指示器 */}
+                          {isDragOver && (
+                            <div className="absolute inset-0 bg-green-500 bg-opacity-30 border-2 border-dashed border-green-500 rounded-lg flex items-center justify-center">
+                              <div className="text-green-700 text-xs font-bold">放置</div>
+                            </div>
+                          )}
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                  
+                  {/* 拖拽提示 */}
+                  <div className="mt-3 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                    <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                    拖拽图片到想要的位置来重新排序动画帧
                   </div>
                 </div>
               )}
