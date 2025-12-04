@@ -50,6 +50,10 @@ pnpm lint         # Run ESLint
 
 ![NanoMotion App Screenshot](./nanomotion-animation-1764830817471.gif)
 
+![NanoMotion App Screenshot](./nanomotion-animation-1764841382594.gif)
+
+![NanoMotion App Screenshot](./ezgif.com-video-to-gif-converter.gif)
+
 
 ## github继承
 
