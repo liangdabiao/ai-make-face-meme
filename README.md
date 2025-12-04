@@ -19,6 +19,7 @@ pnpm lint         # Run ESLint
 ```
 
 重命名：  - 副本.env 为 .env ，修改为自己的key 
+
 测试gif生成功能： /test
 
 ### 核心架构逻辑说明
