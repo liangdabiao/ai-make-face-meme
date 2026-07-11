@@ -107,6 +107,12 @@ pnpm start       # 运行生产构建
 pnpm lint        # ESLint
 pnpm typecheck   # tsc --noEmit
 ```
+## 实际效果
+
+![实际效果](docs/ScreenShot_2025-12-03_162958_679.png)
+![实际效果](docs/nanomotion-animation-1764830380765.gif)
+![实际效果](docs/nanomotion-animation-1764830817471.gif)
+![实际效果](docs/nanomotion-animation-1764841382594.gif)
 
 ## 已知限制
 
