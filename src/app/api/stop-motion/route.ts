@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
                   frameIndex: outcome.index + 1,
                   poseName: outcome.pose.name,
                   type: "image",
-                  imageUrl: outcome.result.imageUrl,
+                  url: outcome.result.url,
                   contentType: outcome.result.contentType,
                 },
               });

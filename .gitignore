@@ -50,3 +50,6 @@ yarn-error.log*
 *.tmp
 *.bak
 test-upload.*
+
+# Generated frame cache (written at runtime by /api/stop-motion)
+public/generated/

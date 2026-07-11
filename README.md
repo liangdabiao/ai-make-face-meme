@@ -59,12 +59,12 @@ Next.js API 路由  (src/app/api/stop-motion/route.ts)
   │     a. 上传参考图到公网图床（uguu.se）       ← src/lib/ai.ts
   │     b. POST /tasks/create 提交生成任务
   │     c. 轮询 POST /tasks/query 直到完成
-  │     d. 提取结果图片 URL
+  │     d. 下载结果图片，存到 public/generated/  ← src/lib/frame-store.ts
   │
-  │  3. 以 `frame` / `frame_error` 事件流式回传给前端
+  │  3. 以 `frame` 事件把 `/generated/xxx.png` URL 流式回传给前端
   │
   ▼
-浏览器：追加帧、渲染时间线、导出 GIF
+浏览器：<img src="/generated/xxx.png"> 原生加载（无 CORS、无 base64 膨胀）
 ```
 
 ### 关键设计
@@ -72,7 +72,7 @@ Next.js API 路由  (src/app/api/stop-motion/route.ts)
 - **单 Provider AI 层**（[src/lib/ai.ts](file:///d:/ai-make-face-meme-main/src/lib/ai.ts)）— 一个 `generateImage(prompt, buffer, options)` 函数封装了 apiz 的异步任务 API。要接入其他 Provider，只需在此文件内扩展，路由层无需感知。
 - **并行任务扇出** — 12 个 Promise 通过 `Promise.allSettled` 同时跑，得到统一的批次错误模型和可预测的延迟。
 - **自定义分隔符的流式响应** — `\n---CHUNK_END---\n` 把 JSON 事件拼起来，前端用 `String.split` 即可解析，并且能正常穿越 Next.js 路由层。
-- **零中间产物** — 参考图上传、生成图片、GIF 导出全部走内存或浏览器 Blob，不写盘。
+- **结果存盘为静态文件**（[src/lib/frame-store.ts](file:///d:/ai-make-face-meme-main/src/lib/frame-store.ts)）— apiz 返回的 `cdn-hk.51sux.com` 域名没有 CORS 头，浏览器无法直接拉取。服务端把图片下载后写到 `public/generated/`，前端用普通 `<img>` 加载，零中间产物、零 base64 膨胀。LRU 上限 60 张，自动清理旧文件。
 
 ## 项目结构
 
@@ -85,7 +85,8 @@ Next.js API 路由  (src/app/api/stop-motion/route.ts)
 │   │   ├── page.tsx                   # 上传、时间线、播放、导出
 │   │   └── globals.css                # Tailwind 入口
 │   └── lib/
-│       ├── ai.ts                      # apiz.ai 客户端（提交、轮询、提取）
+│       ├── ai.ts                      # apiz.ai 客户端（提交、轮询、存盘）
+│       ├── frame-store.ts             # 生成图本地存盘 + LRU 清理
 │       └── poses.ts                   # 姿势模板 + 帧 prompt 构造器
 ├── types/
 │   └── gifencoder.d.ts                # 第三方类型补丁
@@ -107,18 +108,17 @@ pnpm start       # 运行生产构建
 pnpm lint        # ESLint
 pnpm typecheck   # tsc --noEmit
 ```
+
 ## 实际效果
 
-![实际效果](docs/ScreenShot_2025-12-03_162958_679.png)
-![实际效果](docs/nanomotion-animation-1764830380765.gif)
-![实际效果](docs/nanomotion-animation-1764830817471.gif)
-![实际效果](docs/nanomotion-animation-1764841382594.gif)
+> 在本地跑一遍 `pnpm dev` 即可看到完整效果。截屏和示例 GIF 后续可上传到 `docs/` 目录并在 README 引用。
 
 ## 已知限制
 
 - apiz 单帧约 30 秒（1K 分辨率、4:3，默认模型 32 积分/帧），12 帧并行通常 40–50 秒完成整批。
 - 公网图床是外部依赖。如果 uguu.se 不可用或被屏蔽，将 `APIZ_REFERENCE_UPLOAD_URL` 切到自托管地址。
 - GIF 导出最多取时间线前 12 帧；如需更长动画，修改 [src/app/page.tsx](file:///d:/ai-make-face-meme-main/src/app/page.tsx) 中的 `MAX_GIF_FRAMES`。
+- 生成的图片会落到 `public/generated/` 目录，LRU 上限 60 张；服务端重启或部署到 serverless 环境时会被清空。
 
 ## 致谢
 

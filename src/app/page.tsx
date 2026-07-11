@@ -42,8 +42,7 @@ type StreamEvent =
 interface FramePayload {
   frameIndex: number;
   type: "image";
-  base64ImageData?: string;
-  imageUrl?: string;
+  url?: string;
   contentType?: string;
 }
 
@@ -55,26 +54,6 @@ const IMAGE_LOAD_TIMEOUT_MS = 15000;
 
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-}
-
-function toDataUrl(base64: string, contentType: string): string {
-  return `data:${contentType};base64,${base64}`;
-}
-
-async function fetchAsDataUrl(url: string): Promise<{ dataUrl: string; contentType: string } | null> {
-  try {
-    const resp = await fetch(url);
-    if (!resp.ok) return null;
-    const blob = await resp.blob();
-    return await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve({ dataUrl: reader.result as string, contentType: blob.type || "image/png" });
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
 }
 
 function loadImage(src: string, index: number): Promise<HTMLImageElement> {
@@ -241,24 +220,17 @@ export default function Home() {
           break;
         case "frame": {
           const payload = event.data;
-          let dataUrl: string | null = null;
-          let contentType = payload.contentType || "image/png";
-          if (payload.base64ImageData) {
-            dataUrl = toDataUrl(payload.base64ImageData, contentType);
-          } else if (payload.imageUrl) {
-            const fetched = await fetchAsDataUrl(payload.imageUrl);
-            if (fetched) {
-              dataUrl = fetched.dataUrl;
-              contentType = fetched.contentType;
-            }
+          if (!payload.url) {
+            setProgressMessage(`Frame ${payload.frameIndex} missing image URL`);
+            break;
           }
-          if (!dataUrl) break;
+          const contentType = payload.contentType || "image/png";
           setGeneratedFrameCount((n) => n + 1);
           setFrames((prev) => [
             ...prev,
             {
               id: generateId("generated"),
-              url: dataUrl!,
+              url: payload.url!,
               file: new File(["generated"], "generated.png", { type: contentType }),
             },
           ]);

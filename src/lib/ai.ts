@@ -1,12 +1,15 @@
 /**
  * apiz.ai async task API client.
  *
- * Flow: upload reference image to a public URL → submit generation task → poll until done.
+ * Flow: upload reference image to a public URL → submit generation task → poll until done
+ *       → download the result image → persist it via the frame store.
  * Docs: https://api.apiz.ai
  */
 
+import { saveFrame } from "./frame-store";
+
 export interface ImageGenerationResult {
-  imageUrl: string;
+  url: string;
   contentType: string;
   model: string;
 }
@@ -68,15 +71,17 @@ async function apizFetch(
     signal,
   });
   const text = await resp.text();
-  let json: ApizResponse;
+  let json: ApizResponse | { detail?: string };
   try {
     json = JSON.parse(text) as ApizResponse;
   } catch {
     throw new Error(`apiz ${path} returned non-JSON (status=${resp.status}): ${text.slice(0, 200)}`);
   }
   if (!resp.ok || (json.code && json.code !== 200)) {
-    const msg = json.message || json.data?.error?.message || `HTTP ${resp.status}`;
-    throw new Error(`apiz ${path} failed: ${msg}`);
+    const j = json as ApizResponse & { detail?: string };
+    const msg = j.message || j.detail || j.data?.error?.message || `HTTP ${resp.status}`;
+    const raw = text.slice(0, 400);
+    throw new Error(`apiz ${path} failed: ${msg} | raw: ${raw}`);
   }
   return json;
 }
@@ -98,6 +103,70 @@ function extractApizImageUrl(taskData: ApizResponse["data"]): string | null {
     if (typeof c.url === "string" && c.url.trim()) return c.url;
   }
   return null;
+}
+
+const DOWNLOAD_CONCURRENCY = 4;
+
+class Semaphore {
+  private available: number;
+  private queue: Array<() => void> = [];
+  constructor(capacity: number) {
+    this.available = capacity;
+  }
+  async acquire(): Promise<void> {
+    if (this.available > 0) {
+      this.available -= 1;
+      return;
+    }
+    await new Promise<void>((resolve) => this.queue.push(resolve));
+    this.available -= 1;
+  }
+  release(): void {
+    this.available += 1;
+    const next = this.queue.shift();
+    if (next) next();
+  }
+}
+
+const downloadSemaphore = new Semaphore(DOWNLOAD_CONCURRENCY);
+
+async function downloadAndSaveFrame(
+  imageUrl: string,
+  signal?: AbortSignal,
+): Promise<ImageGenerationResult> {
+  // The apiz CDN (cdn-hk.51sux.com) rate-limits parallel downloads, so
+  // we cap concurrency with a semaphore and retry with exponential backoff.
+  await downloadSemaphore.acquire();
+  try {
+    const MAX_ATTEMPTS = 5;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const resp = await fetch(imageUrl, { signal });
+        if (!resp.ok) {
+          throw new Error(`status ${resp.status}`);
+        }
+        const arrayBuffer = await resp.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        if (buffer.length === 0) {
+          throw new Error("empty body");
+        }
+        const contentType = resp.headers.get("content-type") || "image/png";
+        const { url } = saveFrame(buffer, contentType);
+        return { url, contentType, model: APIZ_MODEL };
+      } catch (err) {
+        lastErr = err;
+        if (attempt < MAX_ATTEMPTS) {
+          const delay = Math.min(1000 * 2 ** (attempt - 1), 8000);
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+    }
+    const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+    throw new Error(`Failed to download generated image after ${MAX_ATTEMPTS} attempts: ${msg}`);
+  } finally {
+    downloadSemaphore.release();
+  }
 }
 
 async function uploadReferenceImage(buffer: Buffer, mimeType: string): Promise<string> {
@@ -178,7 +247,7 @@ export async function generateImage(
       if (!url) {
         throw new Error(`apiz task completed without an image URL: ${JSON.stringify(data).slice(0, 300)}`);
       }
-      return { imageUrl: url, contentType: "image/png", model };
+      return await downloadAndSaveFrame(url, options.signal);
     }
 
     if (FAIL_STATUSES.has(lastStatus)) {
